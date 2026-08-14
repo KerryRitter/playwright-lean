@@ -1,0 +1,5 @@
+node_modules/
+.playwright-lean/
+.playlite/
+.npm/
+*.log
