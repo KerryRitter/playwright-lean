@@ -1,0 +1,23 @@
+[
+  {
+    "id": "CLUSTER-01",
+    "category": "GENERAL_FAILURE",
+    "failureCount": 1,
+    "affectedSpecCount": 1,
+    "primaryLocation": "billing.spec.ts",
+    "file": "billing.spec.ts",
+    "line": 0,
+    "normalizedError": "Error: expect(received).toBe(expected)",
+    "rawErrorSample": "Error: expect(received).toBe(expected)\nExpected: 200\nReceived: 400",
+    "stackSample": "Error: expect(received).toBe(expected)\n    at billing.spec.ts:50:10",
+    "affectedSpecs": [
+      "billing.spec.ts"
+    ],
+    "exampleSpecs": [
+      {
+        "title": "charge customer card",
+        "file": "billing.spec.ts"
+      }
+    ]
+  }
+]

@@ -1,0 +1,12 @@
+{
+  "time": "2026-08-14T18:31:25.922Z",
+  "total": 1,
+  "passed": 0,
+  "failed": 1,
+  "failedTestIds": [
+    "billing.spec.ts::charge customer card"
+  ],
+  "clusterIds": [
+    "CLUSTER-01"
+  ]
+}

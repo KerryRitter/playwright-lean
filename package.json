@@ -1,0 +1,32 @@
+{
+  "name": "playwright-lean",
+  "version": "1.0.1",
+  "description": "Token-optimized CLI & Model Context Protocol (MCP) server for Playwright suite execution, on-demand failure clustering, and live browser automation",
+  "main": "src/index.mjs",
+  "type": "module",
+  "bin": {
+    "playwright-lean": "bin/playwright-lean.mjs",
+    "pw-lean": "bin/playwright-lean.mjs",
+    "playwright-lean-mcp": "bin/playwright-lean-mcp.mjs"
+  },
+  "scripts": {
+    "test": "node --test tests/*.test.mjs",
+    "audit": "node bin/playwright-lean.mjs audit"
+  },
+  "keywords": [
+    "playwright",
+    "mcp",
+    "cli",
+    "llm",
+    "token-optimization",
+    "testing",
+    "error-clustering",
+    "dossier",
+    "browser-automation"
+  ],
+  "author": "Kerry",
+  "license": "MIT",
+  "dependencies": {
+    "playwright": "^1.50.0"
+  }
+}
