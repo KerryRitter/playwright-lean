@@ -92,7 +92,12 @@ function extractPrimaryFrame(stack, specFile) {
 }
 
 export function clusterResults(jsonPath = '.playwright-lean/results.json', outputDir = '.playwright-lean') {
-  const resolvedPath = path.resolve(process.cwd(), jsonPath);
+  let resolvedPath = path.resolve(process.cwd(), jsonPath);
+  if (!fs.existsSync(resolvedPath) && fs.existsSync(path.resolve(process.cwd(), 'tests/playwright', jsonPath))) {
+    resolvedPath = path.resolve(process.cwd(), 'tests/playwright', jsonPath);
+  } else if (!fs.existsSync(resolvedPath) && fs.existsSync(path.resolve(process.cwd(), 'tests/playwright/test-results/results.json'))) {
+    resolvedPath = path.resolve(process.cwd(), 'tests/playwright/test-results/results.json');
+  }
   if (!fs.existsSync(resolvedPath)) {
     throw new Error(`Results JSON file not found at ${resolvedPath}`);
   }

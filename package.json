@@ -1,9 +1,18 @@
 {
   "name": "playwright-lean",
-  "version": "1.0.1",
+  "version": "1.0.5",
   "description": "Token-optimized CLI & Model Context Protocol (MCP) server for Playwright suite execution, on-demand failure clustering, and live browser automation",
   "main": "src/index.mjs",
   "type": "module",
+  "exports": {
+    ".": "./src/index.mjs",
+    "./reporter": "./src/reporter.mjs",
+    "./jest-reporter": {
+      "import": "./src/jest-reporter.mjs",
+      "require": "./src/jest-reporter.cjs",
+      "default": "./src/jest-reporter.mjs"
+    }
+  },
   "bin": {
     "playwright-lean": "bin/playwright-lean.mjs",
     "pw-lean": "bin/playwright-lean.mjs",

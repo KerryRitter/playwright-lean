@@ -5,10 +5,25 @@ import { clusterResults } from './cluster.mjs';
 const DOSSIER_DIR = path.resolve(process.cwd(), '.playwright-lean/errors');
 const STATE_CACHE = path.resolve(process.cwd(), '.playwright-lean/cache/last-run-state.json');
 
-export function generateDossiers(jsonPath = '.playwright-lean/results.json') {
-  const summary = clusterResults(jsonPath);
-  if (!fs.existsSync(DOSSIER_DIR)) {
-    fs.mkdirSync(DOSSIER_DIR, { recursive: true });
+export function generateDossiers(input = '.playwright-lean/results.json', customOutputDir) {
+  const dossierDir = customOutputDir
+    ? path.resolve(process.cwd(), customOutputDir, 'errors')
+    : path.resolve(process.cwd(), '.playwright-lean/errors');
+  const cacheDir = customOutputDir
+    ? path.resolve(process.cwd(), customOutputDir, 'cache')
+    : path.resolve(process.cwd(), '.playwright-lean/cache');
+  const stateCache = path.join(cacheDir, 'last-run-state.json');
+
+  const summary =
+    typeof input === 'object' && input !== null && Array.isArray(input.clusters)
+      ? input
+      : clusterResults(typeof input === 'string' ? input : '.playwright-lean/results.json', customOutputDir);
+
+  if (!fs.existsSync(dossierDir)) {
+    fs.mkdirSync(dossierDir, { recursive: true });
+  }
+  if (!fs.existsSync(cacheDir)) {
+    fs.mkdirSync(cacheDir, { recursive: true });
   }
 
   const activeClusterIds = new Set();
@@ -16,7 +31,7 @@ export function generateDossiers(jsonPath = '.playwright-lean/results.json') {
 
   for (const c of summary.clusters) {
     activeClusterIds.add(c.id);
-    const clusterFilePath = path.join(DOSSIER_DIR, `${c.id}.md`);
+    const clusterFilePath = path.join(dossierDir, `${c.id}.md`);
 
     const affectedList = c.affectedSpecs.map((s) => `- \`${s.file}\` (${s.title})`).join('\n');
     const codeSnippet = c.snippet
@@ -69,13 +84,13 @@ playwright-lean verify ${c.id}
   }
 
   // Prune fixed clusters
-  if (fs.existsSync(DOSSIER_DIR)) {
-    const existingFiles = fs.readdirSync(DOSSIER_DIR);
+  if (fs.existsSync(dossierDir)) {
+    const existingFiles = fs.readdirSync(dossierDir);
     for (const file of existingFiles) {
       if (file.startsWith('CLUSTER-') && file.endsWith('.md')) {
         const id = file.replace('.md', '');
         if (!activeClusterIds.has(id)) {
-          fs.unlinkSync(path.join(DOSSIER_DIR, file));
+          fs.unlinkSync(path.join(dossierDir, file));
         }
       }
     }
@@ -83,14 +98,13 @@ playwright-lean verify ${c.id}
 
   // Compute deltas from previous run
   let deltas = { fixed: 0, regressed: 0 };
-  const cacheDir = path.dirname(STATE_CACHE);
   if (!fs.existsSync(cacheDir)) {
     fs.mkdirSync(cacheDir, { recursive: true });
   }
 
-  if (fs.existsSync(STATE_CACHE)) {
+  if (fs.existsSync(stateCache)) {
     try {
-      const prevState = JSON.parse(fs.readFileSync(STATE_CACHE, 'utf8'));
+      const prevState = JSON.parse(fs.readFileSync(stateCache, 'utf8'));
       const prevFailedTests = new Set(prevState.failedTestIds || []);
       const currentFailedTests = new Set(summary.failedSpecs.map((s) => `${s.file}::${s.title}`));
 
@@ -116,7 +130,7 @@ playwright-lean verify ${c.id}
     failedTestIds: summary.failedSpecs.map((s) => `${s.file}::${s.title}`),
     clusterIds: Array.from(activeClusterIds),
   };
-  fs.writeFileSync(STATE_CACHE, JSON.stringify(currentState, null, 2), 'utf8');
+  fs.writeFileSync(stateCache, JSON.stringify(currentState, null, 2), 'utf8');
 
   // Build compact index markdown (< 150 tokens)
   let deltaStr = '';
@@ -139,12 +153,13 @@ playwright-lean verify ${c.id}
     indexMarkdown += `\n> *Click any cluster link above to inspect the minimal failure dossier, or run \`playwright-lean diagnose <CLUSTER-ID>\`.*`;
   }
 
-  fs.writeFileSync(path.join(DOSSIER_DIR, 'INDEX.md'), indexMarkdown, 'utf8');
+  fs.writeFileSync(path.join(dossierDir, 'INDEX.md'), indexMarkdown, 'utf8');
 
   return {
     summary,
     deltas,
+    compactIndex: indexMarkdown,
     indexMarkdown,
-    dossierDir: DOSSIER_DIR,
+    dossierDir,
   };
 }

@@ -352,7 +352,8 @@ class BrowserSession {
 
     if (nodeContext) {
       const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
-      const fn = new AsyncFunction('page', 'context', 'browser', code);
+      const wrapped = code.trim().startsWith('return ') || code.includes(';') || code.includes('{') ? code : `return (${code})`;
+      const fn = new AsyncFunction('page', 'context', 'browser', wrapped);
       return await fn(page, this.context, this.browser);
     } else {
       return await page.evaluate(code);

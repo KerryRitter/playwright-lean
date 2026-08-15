@@ -210,13 +210,14 @@ export async function cli(args = []) {
     }
 
     case 'eval': {
-      const code = rest[0];
+      const nodeContext = rest.includes('--node');
+      const codeArgs = rest.filter((a) => a !== '--node');
+      const code = codeArgs.join(' ');
       if (!code) {
         process.stderr.write('Error: Code expression required\n');
         return 1;
       }
       try {
-        const nodeContext = rest.includes('--node');
         const res = await session.eval(code, { nodeContext });
         if (typeof res === 'object') {
           console.log(JSON.stringify(res, null, 2));

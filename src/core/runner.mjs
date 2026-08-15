@@ -27,30 +27,38 @@ export async function runPlaywright(options = {}) {
     'playwright',
     'test',
     ...patterns,
-    `--reporter=json,list`,
     `--workers=${workers}`,
   ];
+
+  let targetCwd = process.cwd();
+  let resolvedConfig = config;
+  if (!fs.existsSync(config) && fs.existsSync(path.join(process.cwd(), 'tests/playwright', config))) {
+    targetCwd = path.join(process.cwd(), 'tests/playwright');
+  }
+
+  const configPathInCwd = path.join(targetCwd, resolvedConfig);
+  if (!fs.existsSync(configPathInCwd)) {
+    args.push('--reporter=json,line');
+  } else {
+    args.push(`--config=${resolvedConfig}`);
+  }
 
   if (project) {
     args.push(`--project=${project}`);
   }
-  if (config && fs.existsSync(config)) {
-    args.push(`--config=${config}`);
-  }
 
   if (!quiet) {
-    process.stderr.write(`[playwright-lean] Executing: npx ${args.join(' ')}\n`);
+    process.stderr.write(`[playwright-lean] Executing: npx ${args.join(' ')} (in ${targetCwd})\n`);
   }
 
   const startTime = Date.now();
   let jsonOutput = '';
   let fullOutput = '';
 
-  const jsonStream = fs.createWriteStream(resultsAbsPath);
-
   try {
     const exitCode = await new Promise((resolve) => {
       const proc = spawn('npx', args, {
+        cwd: targetCwd,
         env: {
           ...process.env,
           PLAYWRIGHT_JSON_OUTPUT_NAME: resultsAbsPath,
@@ -63,7 +71,6 @@ export async function runPlaywright(options = {}) {
         fullOutput += text;
         if (text.startsWith('{') || jsonOutput.length > 0) {
           jsonOutput += text;
-          jsonStream.write(data);
         } else if (!quiet) {
           process.stdout.write(data);
         }
@@ -75,7 +82,20 @@ export async function runPlaywright(options = {}) {
       });
 
       proc.on('close', (code) => {
-        jsonStream.end();
+        const defaultResults = path.join(targetCwd, 'test-results/results.json');
+        if (fs.existsSync(defaultResults) && fs.statSync(defaultResults).size > 0) {
+          try {
+            fs.copyFileSync(defaultResults, resultsAbsPath);
+          } catch (e) {
+            // ignore copy failure
+          }
+        } else if (jsonOutput.trim().startsWith('{')) {
+          try {
+            fs.writeFileSync(resultsAbsPath, jsonOutput, 'utf8');
+          } catch (e) {
+            // ignore
+          }
+        }
         resolve(code ?? 1);
       });
     });
@@ -84,9 +104,14 @@ export async function runPlaywright(options = {}) {
 
     // Generate error dossiers & compute deltas immediately
     let dossierResult = null;
-    if (fs.existsSync(resultsAbsPath)) {
+    let jsonTarget = resultsAbsPath;
+    if (!fs.existsSync(jsonTarget) && fs.existsSync(path.resolve(process.cwd(), 'test-results/results.json'))) {
+      jsonTarget = path.resolve(process.cwd(), 'test-results/results.json');
+    }
+
+    if (fs.existsSync(jsonTarget)) {
       try {
-        dossierResult = generateDossiers(resultsAbsPath);
+        dossierResult = generateDossiers(jsonTarget);
       } catch (err) {
         if (!quiet) {
           process.stderr.write(`[playwright-lean] Warning: Failed to generate dossiers: ${err.message}\n`);

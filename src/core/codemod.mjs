@@ -57,6 +57,7 @@ export function runCodemod(findPattern, replacePattern, options = {}) {
     scannedCount: files.length,
     matchedFiles: modifiedCount,
     modifiedCount,
+    filesModified: modifiedCount,
     totalReplacements: matchCount,
     matchCount,
     dryRun,
