@@ -1,12 +1,20 @@
 import fs from 'fs';
 import path from 'path';
+import { isTestFile } from './test-files.mjs';
 
 function stripAnsi(text) {
   return (text || '').replace(/[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g, '');
 }
 
+function redactSensitive(text) {
+  return text
+    .replace(/(authorization\s*[:=]\s*(?:bearer|basic)\s+)[^\s]+/gi, '$1<REDACTED>')
+    .replace(/([?&](?:access_?token|api_?key|password|secret|token)=)[^&\s]+/gi, '$1<REDACTED>')
+    .replace(/((?:password|secret|token|api_?key)\s*[:=]\s*)[^\s,;]+/gi, '$1<REDACTED>');
+}
+
 function normalizeError(rawError) {
-  let cleaned = stripAnsi(rawError);
+  let cleaned = redactSensitive(stripAnsi(rawError));
   // Strip timestamps, dynamic UUIDs, ports, and transient URLs
   cleaned = cleaned.replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, '<GUID>');
   cleaned = cleaned.replace(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z/g, '<TIMESTAMP>');
@@ -67,13 +75,7 @@ function extractPrimaryFrame(stack, specFile) {
       relativeLocation: `${relPath}:${lineNum}`,
     };
 
-    const isSpec =
-      relPath.endsWith('.spec.ts') ||
-      relPath.endsWith('.test.ts') ||
-      relPath.endsWith('.spec.js') ||
-      relPath.endsWith('.test.js') ||
-      relPath.endsWith('.spec.tsx') ||
-      relPath.endsWith('.test.tsx');
+    const isSpec = isTestFile(relPath);
 
     if (!isSpec) {
       if (!implFrame) implFrame = frameObj;
@@ -120,15 +122,20 @@ export function clusterResults(jsonPath = '.playwright-lean/results.json', outpu
 
         if (!lastResult) continue;
 
-        if (lastResult.status === 'passed') {
+        const isUnexpected = test.status === 'unexpected';
+        const isFailedResult = lastResult.status === 'failed' || lastResult.status === 'timedOut';
+
+        if (!isUnexpected && (lastResult.status === 'passed' || (test.status === 'expected' && isFailedResult))) {
           passedTests++;
         } else if (lastResult.status === 'skipped') {
           skippedTests++;
-        } else if (lastResult.status === 'failed' || lastResult.status === 'timedOut' || test.status === 'unexpected') {
+        } else if (isUnexpected || (!test.status && isFailedResult)) {
           failedTests++;
           failedSpecs.push({ file: spec.file, title: spec.title });
 
-          const rawError = lastResult.error?.message || 'Unknown error';
+          const rawError = lastResult.error?.message || (lastResult.status === 'passed'
+            ? 'Test was expected to fail, but passed'
+            : 'Unknown error');
           const stack = lastResult.error?.stack || '';
           const normalized = normalizeError(rawError);
           const category = categorizeError(rawError, stack);
@@ -145,8 +152,8 @@ export function clusterResults(jsonPath = '.playwright-lean/results.json', outpu
               line: frame.line,
               normalizedError: normalized,
               signature: normalized,
-              rawErrorSample: stripAnsi(rawError).substring(0, 300),
-              stackSample: stripAnsi(stack).split('\n').slice(0, 8).join('\n'),
+              rawErrorSample: redactSensitive(stripAnsi(rawError)).substring(0, 300),
+              stackSample: redactSensitive(stripAnsi(stack)).split('\n').slice(0, 8).join('\n'),
               count: 0,
               affectedSpecs: new Map(),
             });
@@ -200,8 +207,8 @@ export function clusterResults(jsonPath = '.playwright-lean/results.json', outpu
               line: frame.line,
               normalizedError: normalized,
               signature: normalized,
-              rawErrorSample: stripAnsi(rawError).substring(0, 300),
-              stackSample: stripAnsi(stack).split('\n').slice(0, 8).join('\n'),
+              rawErrorSample: redactSensitive(stripAnsi(rawError)).substring(0, 300),
+              stackSample: redactSensitive(stripAnsi(stack)).split('\n').slice(0, 8).join('\n'),
               count: 0,
               affectedSpecs: new Map(),
             });

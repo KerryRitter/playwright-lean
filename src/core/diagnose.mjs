@@ -3,11 +3,17 @@ import path from 'path';
 import { generateDossiers } from './dossier.mjs';
 
 export function getDiagnostic(clusterId, options = {}) {
-  const dossierPath = path.resolve(process.cwd(), `.playwright-lean/errors/${clusterId}.md`);
+  if (!/^CLUSTER-\d{2,}$/.test(clusterId)) {
+    throw new Error(`Invalid cluster ID: ${clusterId}`);
+  }
+
+  const outputDir = path.resolve(process.cwd(), options.outputDir || '.playwright-lean');
+  const dossierDir = path.join(outputDir, 'errors');
+  const dossierPath = path.join(dossierDir, `${clusterId}.md`);
 
   if (!fs.existsSync(dossierPath)) {
     // Attempt generating dossiers first
-    generateDossiers();
+    generateDossiers(options.jsonPath, outputDir);
   }
 
   if (!fs.existsSync(dossierPath)) {

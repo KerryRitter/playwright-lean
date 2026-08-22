@@ -172,14 +172,14 @@ test('E2E CLI: codemod command performs batch refactoring', () => {
   assert.equal(fs.readFileSync(sampleFile, 'utf8'), 'await page.waitForTimeout(1000);');
 
   // Test real execution
-  const realRes = runCli(['codemod', 'page\\.waitForTimeout\\(\\d+\\)', 'page.waitForLoadState("networkidle")'], { cwd: tmpDir });
+  const realRes = runCli(['codemod', 'page\\.waitForTimeout\\(\\d+\\)', 'page.waitForLoadState("networkidle")', '--apply'], { cwd: tmpDir });
   assert.equal(realRes.status, 0);
   assert.equal(fs.readFileSync(sampleFile, 'utf8'), 'await page.waitForLoadState("networkidle");');
 
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
-test('E2E CLI: eval command evaluates expressions in live browser and node contexts', () => {
+test('E2E CLI: eval command evaluates page expressions and rejects Node context', () => {
   // Browser DOM eval
   const domRes = runCli(['eval', '100 + 45']);
   assert.equal(domRes.status, 0);
@@ -187,22 +187,24 @@ test('E2E CLI: eval command evaluates expressions in live browser and node conte
 
   // Node context eval
   const nodeRes = runCli(['eval', '--node', '2 * 3 * 4']);
-  assert.equal(nodeRes.status, 0);
-  assert.equal(nodeRes.stdout.trim(), '24');
+  assert.equal(nodeRes.status, 1);
+  assert.ok(nodeRes.stderr.includes('Node-context eval is disabled'));
 });
 
 test('E2E CLI: navigate, screenshot, and tabs commands operate cleanly', () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pw-e2e-nav-'));
-  const screenshotPath = path.join(tmpDir, 'test-shot.png');
   const dataUrl = 'data:text/html,<html><head><title>E2E Page</title></head><body><h1>Playwright Lean E2E</h1></body></html>';
 
   const navRes = runCli(['navigate', dataUrl]);
   assert.equal(navRes.status, 0);
 
-  const shotRes = runCli(['screenshot', screenshotPath]);
+  const shotRes = runCli(['screenshot', 'e2e-test-shot.png']);
   assert.equal(shotRes.status, 0);
+  const screenshotPath = shotRes.stdout.trim();
+  assert.ok(screenshotPath.includes('.playwright-lean/screenshots/'));
   assert.ok(fs.existsSync(screenshotPath));
   assert.ok(fs.statSync(screenshotPath).size > 0);
+  fs.unlinkSync(screenshotPath);
 
   const tabsRes = runCli(['tabs', '--json']);
   assert.equal(tabsRes.status, 0);
@@ -243,7 +245,7 @@ test('E2E MCP: stdio server handles JSON-RPC initialization and tool discovery',
   const toolsResponse = JSON.parse(lines[1]);
   assert.equal(toolsResponse.id, 2);
   const toolNames = toolsResponse.result.tools.map((t) => t.name);
-  assert.ok(toolNames.includes('playlite_enable_group'));
+  assert.ok(toolNames.includes('playwright-lean_enable_group'));
   assert.ok(toolNames.includes('browser_navigate'));
   assert.ok(toolNames.includes('browser_snapshot'));
   assert.ok(toolNames.includes('browser_click'));

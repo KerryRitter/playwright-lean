@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { isTestFile, shouldSkipDirectory } from './test-files.mjs';
 
 const AUDIT_RULES = [
   {
@@ -37,17 +38,10 @@ function scanDirectory(dir, fileList = []) {
   for (const entry of entries) {
     const fullPath = path.join(dir, entry.name);
     if (entry.isDirectory()) {
-      if (
-        entry.name !== 'node_modules' &&
-        entry.name !== '.playwright-lean' &&
-        entry.name !== '.playlite' &&
-        entry.name !== 'test-results' &&
-        entry.name !== 'dist' &&
-        entry.name !== '.git'
-      ) {
+      if (!shouldSkipDirectory(entry.name)) {
         scanDirectory(fullPath, fileList);
       }
-    } else if (entry.isFile() && (entry.name.endsWith('.ts') || entry.name.endsWith('.js') || entry.name.endsWith('.mjs'))) {
+    } else if (entry.isFile() && isTestFile(entry.name)) {
       fileList.push(fullPath);
     }
   }

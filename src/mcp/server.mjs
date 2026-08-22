@@ -30,7 +30,7 @@ export async function startMcpServer() {
     process.stdout.write(JSON.stringify(payload) + '\n');
   }
 
-  rl.on('line', async (line) => {
+  async function processLine(line) {
     const trimmed = line.trim();
     if (!trimmed) return;
 
@@ -96,7 +96,14 @@ export async function startMcpServer() {
         break;
       }
     }
+  }
+
+  let requestQueue = Promise.resolve();
+  rl.on('line', (line) => {
+    requestQueue = requestQueue
+      .then(() => processLine(line))
+      .catch((err) => process.stderr.write(`[playwright-lean-mcp] Request handling error: ${err.message}\n`));
   });
 
-  process.stderr.write('[playlite-mcp] Server running on stdio\n');
+  process.stderr.write('[playwright-lean-mcp] Server running on stdio\n');
 }

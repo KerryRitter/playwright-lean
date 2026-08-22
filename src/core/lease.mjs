@@ -3,56 +3,90 @@ import path from 'path';
 import os from 'os';
 
 const DEFAULT_LEASE_PATH = path.join(os.homedir(), '.playwright-lean', 'run.lease');
+const POLL_INTERVAL_MS = 500;
 
 export function getLeasePath(customPath) {
   return customPath || process.env.PW_LEAN_LEASE_FILE || DEFAULT_LEASE_PATH;
 }
 
+function getLockDir(leaseFile) {
+  return `${leaseFile}.lock`;
+}
+
+function getOwnerFile(lockDir) {
+  return path.join(lockDir, 'owner.json');
+}
+
+function wait() {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, POLL_INTERVAL_MS);
+}
+
+function isPidAlive(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function readOwner(lockDir) {
+  try {
+    return JSON.parse(fs.readFileSync(getOwnerFile(lockDir), 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+function reclaimStaleLock(lockDir) {
+  const quarantinedDir = `${lockDir}.stale-${process.pid}-${Date.now()}`;
+  try {
+    fs.renameSync(lockDir, quarantinedDir);
+  } catch (err) {
+    if (err.code === 'ENOENT') return;
+    throw err;
+  }
+  fs.rmSync(quarantinedDir, { recursive: true, force: true });
+}
+
 export function acquireLease(options = {}) {
   const leaseFile = getLeasePath(options.leasePath);
   const leaseDir = path.dirname(leaseFile);
+  const lockDir = getLockDir(leaseFile);
   if (!fs.existsSync(leaseDir)) {
     fs.mkdirSync(leaseDir, { recursive: true });
   }
 
-  const timeoutMs = options.timeoutMs || 30000;
-  const pollIntervalMs = 500;
+  const timeoutMs = options.timeoutMs ?? 30_000;
   const startTime = Date.now();
 
   while (Date.now() - startTime < timeoutMs) {
     try {
-      if (fs.existsSync(leaseFile)) {
-        const content = fs.readFileSync(leaseFile, 'utf8').trim();
-        const data = JSON.parse(content);
-        const isAlive = isPidAlive(data.pid);
-
-        if (isAlive) {
-          if (!options.quiet) {
-            process.stderr.write(`[playwright-lean] Runner lease held by PID ${data.pid} (${data.info || 'active run'}). Waiting...\n`);
-          }
-          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, pollIntervalMs);
-          continue;
-        } else {
-          if (!options.quiet) {
-            process.stderr.write(`[playwright-lean] Cleaning up stale lease from dead PID ${data.pid}\n`);
-          }
-          fs.unlinkSync(leaseFile);
-        }
-      }
-
-      const leaseData = {
+      fs.mkdirSync(lockDir);
+      fs.writeFileSync(getOwnerFile(lockDir), JSON.stringify({
         pid: process.pid,
         time: new Date().toISOString(),
         info: options.info || 'playwright run',
-      };
-      fs.writeFileSync(leaseFile, JSON.stringify(leaseData, null, 2), { flag: 'wx' });
+      }, null, 2));
       return true;
     } catch (err) {
-      if (err.code === 'EEXIST') {
-        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, pollIntervalMs);
+      if (err.code !== 'EEXIST') throw err;
+
+      const owner = readOwner(lockDir);
+      if (owner && isPidAlive(owner.pid)) {
+        if (!options.quiet) {
+          process.stderr.write(`[playwright-lean] Runner lease held by PID ${owner.pid} (${owner.info || 'active run'}). Waiting...\n`);
+        }
+        wait();
         continue;
       }
-      throw err;
+
+      if (!options.quiet) {
+        const description = owner?.pid ? `dead PID ${owner.pid}` : 'invalid owner metadata';
+        process.stderr.write(`[playwright-lean] Reclaiming stale lease from ${description}\n`);
+      }
+      reclaimStaleLock(lockDir);
     }
   }
 
@@ -61,25 +95,9 @@ export function acquireLease(options = {}) {
 
 export function releaseLease(options = {}) {
   const leaseFile = getLeasePath(options.leasePath);
-  try {
-    if (fs.existsSync(leaseFile)) {
-      const content = fs.readFileSync(leaseFile, 'utf8').trim();
-      const data = JSON.parse(content);
-      if (data.pid === process.pid) {
-        fs.unlinkSync(leaseFile);
-      }
-    }
-  } catch (err) {
-    // Ignore cleanup errors
-  }
-}
-
-function isPidAlive(pid) {
-  if (!pid) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (e) {
-    return false;
+  const lockDir = getLockDir(leaseFile);
+  const owner = readOwner(lockDir);
+  if (owner?.pid === process.pid) {
+    fs.rmSync(lockDir, { recursive: true, force: true });
   }
 }

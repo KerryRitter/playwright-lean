@@ -2,6 +2,21 @@ import { chromium } from 'playwright';
 import fs from 'fs';
 import path from 'path';
 
+const MAX_CONSOLE_LOGS = 200;
+const MAX_CONSOLE_TEXT_LENGTH = 2_000;
+
+function assertNavigableUrl(url) {
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new Error(`Invalid URL: ${url}`);
+  }
+  if (!['http:', 'https:', 'data:', 'about:'].includes(parsed.protocol)) {
+    throw new Error(`Unsupported navigation protocol: ${parsed.protocol}`);
+  }
+}
+
 class BrowserSession {
   constructor() {
     this.browser = null;
@@ -11,12 +26,17 @@ class BrowserSession {
     this.refCounter = 1;
     this.consoleLogs = [];
     this.cdpPort = null;
+    this.connectedOverCDP = false;
+    this.ownsBrowser = false;
+    this.ownsContext = false;
   }
 
   async connectOverCDP(port = 9222) {
+    await this.close();
     this.cdpPort = port;
     const wsEndpoint = `http://localhost:${port}`;
     this.browser = await chromium.connectOverCDP(wsEndpoint);
+    this.connectedOverCDP = true;
     const contexts = this.browser.contexts();
     this.context = contexts.length > 0 ? contexts[0] : await this.browser.newContext();
     const pages = this.context.pages();
@@ -29,19 +49,21 @@ class BrowserSession {
     page.on('console', (msg) => {
       this.consoleLogs.push({
         type: msg.type(),
-        text: msg.text(),
+        text: msg.text().substring(0, MAX_CONSOLE_TEXT_LENGTH),
         location: msg.location(),
         timestamp: new Date().toISOString(),
       });
+      if (this.consoleLogs.length > MAX_CONSOLE_LOGS) this.consoleLogs.shift();
     });
 
     page.on('pageerror', (err) => {
       this.consoleLogs.push({
         type: 'error',
-        text: err.message,
-        stack: err.stack,
+        text: err.message.substring(0, MAX_CONSOLE_TEXT_LENGTH),
+        stack: err.stack?.substring(0, MAX_CONSOLE_TEXT_LENGTH),
         timestamp: new Date().toISOString(),
       });
+      if (this.consoleLogs.length > MAX_CONSOLE_LOGS) this.consoleLogs.shift();
     });
   }
 
@@ -71,6 +93,7 @@ class BrowserSession {
         viewport,
         args: ['--no-sandbox', '--disable-setuid-sandbox'],
       });
+      this.ownsContext = true;
       const pages = this.context.pages();
       this.page = pages.length > 0 ? pages[0] : await this.context.newPage();
     } else {
@@ -79,8 +102,10 @@ class BrowserSession {
           headless,
           args: ['--no-sandbox', '--disable-setuid-sandbox'],
         });
+        this.ownsBrowser = true;
       }
       this.context = await this.browser.newContext({ viewport });
+      this.ownsContext = true;
       this.page = await this.context.newPage();
     }
 
@@ -139,6 +164,7 @@ class BrowserSession {
   }
 
   async navigate(url, options = {}) {
+    assertNavigableUrl(url);
     const page = await this.ensurePage(options);
     this.refMap.clear();
     this.refCounter = 1;
@@ -164,7 +190,7 @@ class BrowserSession {
 
   async snapshot(options = {}) {
     const page = await this.ensurePage(options);
-    const { target = null, foldSiblingsThreshold = 5 } = options;
+    const { target = null, foldSiblingsThreshold = 5, depth = 4, maxLines = 200 } = options;
 
     this.refMap.clear();
     this.refCounter = 1;
@@ -182,24 +208,25 @@ class BrowserSession {
     const processedLines = [];
     let consecutiveIdenticalRole = 0;
     let lastRole = null;
+    let omittedByDepth = 0;
+    let omittedByLimit = 0;
 
     for (let i = 0; i < lines.length; i++) {
+      if (processedLines.length >= maxLines) {
+        omittedByLimit = lines.length - i;
+        break;
+      }
       const line = lines[i];
       const match = line.match(/^(\s*-\s+)([a-zA-Z0-9_-]+)(\s+\"[^\"]+\")?(.*)$/);
 
       if (match) {
         const [, indent, role, name, rest] = match;
-        const refId = `e${this.refCounter++}`;
+        const lineDepth = Math.floor((indent.match(/^\s*/)?.[0].length || 0) / 2);
+        if (lineDepth >= depth) {
+          omittedByDepth++;
+          continue;
+        }
         const cleanName = name ? name.trim().replace(/^\"|\"$/g, '') : '';
-
-        // Register locator for targeted interactions
-        try {
-          if (cleanName) {
-            this.refMap.set(refId, page.getByRole(role, { name: cleanName, exact: false }));
-          } else {
-            this.refMap.set(refId, page.locator(`[role="${role}"]`).first());
-          }
-        } catch (e) {}
 
         // Sibling folding
         if (role === lastRole) {
@@ -216,10 +243,24 @@ class BrowserSession {
           continue;
         }
 
+        const refId = `e${this.refCounter++}`;
+        if (cleanName) {
+          this.refMap.set(refId, page.getByRole(role, { name: cleanName, exact: false }));
+        } else {
+          this.refMap.set(refId, page.locator(`[role="${role}"]`).first());
+        }
+
         processedLines.push(`${indent}[ref=${refId}] ${role}${name || ''}${rest}`);
       } else {
         processedLines.push(line);
       }
+    }
+
+    if (omittedByDepth > 0) {
+      processedLines.push(`... [${omittedByDepth} deeper accessibility nodes omitted; increase depth to inspect]`);
+    }
+    if (omittedByLimit > 0) {
+      processedLines.push(`... [${omittedByLimit} additional snapshot lines omitted; use target to narrow the view]`);
     }
 
     const treeText = processedLines.join('\n');
@@ -340,7 +381,12 @@ class BrowserSession {
     }
 
     const name = filename || `screenshot-${Date.now()}.png`;
-    const filePath = path.isAbsolute(name) ? name : path.resolve(screenshotsDir, name);
+    const filePath = path.resolve(screenshotsDir, name);
+    const relativePath = path.relative(screenshotsDir, filePath);
+    if (path.isAbsolute(name) || relativePath === '..' || relativePath.startsWith(`..${path.sep}`) || path.isAbsolute(relativePath)) {
+      throw new Error('Screenshot filename must stay inside .playwright-lean/screenshots');
+    }
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
 
     await page.screenshot({ path: filePath, fullPage });
     return { success: true, path: filePath };
@@ -348,16 +394,10 @@ class BrowserSession {
 
   async eval(code, options = {}) {
     const page = await this.ensurePage(options);
-    const { nodeContext = false } = options;
-
-    if (nodeContext) {
-      const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
-      const wrapped = code.trim().startsWith('return ') || code.includes(';') || code.includes('{') ? code : `return (${code})`;
-      const fn = new AsyncFunction('page', 'context', 'browser', wrapped);
-      return await fn(page, this.context, this.browser);
-    } else {
-      return await page.evaluate(code);
+    if (options.nodeContext) {
+      throw new Error('Node-context evaluation is disabled; use a trusted local script outside the MCP server.');
     }
+    return await page.evaluate(code);
   }
 
   getConsoleMessages(level = null) {
@@ -366,17 +406,21 @@ class BrowserSession {
   }
 
   async close() {
-    if (this.context) {
+    const detachedFromCDP = this.connectedOverCDP;
+    if (this.ownsContext && this.context) {
       await this.context.close().catch(() => {});
-      this.context = null;
     }
-    if (this.browser) {
+    if (this.ownsBrowser && this.browser) {
       await this.browser.close().catch(() => {});
-      this.browser = null;
     }
+    this.context = null;
+    this.browser = null;
     this.page = null;
     this.refMap.clear();
-    return { success: true };
+    this.connectedOverCDP = false;
+    this.ownsBrowser = false;
+    this.ownsContext = false;
+    return { success: true, detachedFromCDP };
   }
 }
 

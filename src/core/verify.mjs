@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { runPlaywright } from './runner.mjs';
+import { isTestFile } from './test-files.mjs';
 
 export async function verifyTarget(target, options = {}) {
   let patterns = [];
@@ -18,7 +19,7 @@ export async function verifyTarget(target, options = {}) {
 
     for (const m of matches) {
       const filePath = m.replace(/^- `/, '').replace(/`$/, '');
-      if (filePath.endsWith('.spec.ts') || filePath.endsWith('.test.ts')) {
+      if (isTestFile(filePath)) {
         files.add(filePath);
       }
     }
@@ -41,6 +42,7 @@ export async function verifyTarget(target, options = {}) {
     patterns,
     project: options.project,
     workers: options.workers || 1,
+    config: options.config,
     quiet: options.quiet,
   });
 

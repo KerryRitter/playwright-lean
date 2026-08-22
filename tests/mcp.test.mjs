@@ -2,6 +2,15 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'child_process';
 import path from 'path';
+import { handleToolCall } from '../src/mcp/tools.mjs';
+import { getDiagnostic } from '../src/core/diagnose.mjs';
+
+test('MCP: hidden tools and invalid dossier IDs are rejected before execution', async () => {
+  const hiddenTool = await handleToolCall('browser_eval', { code: '6 * 7' });
+  assert.equal(hiddenTool.isError, true);
+  assert.match(hiddenTool.content[0].text, /not enabled/);
+  assert.throws(() => getDiagnostic('../../outside'), /Invalid cluster ID/);
+});
 
 test('MCP Server: handles JSON-RPC initialize, tools/list, and dynamic tool group activation', async () => {
   const mcpBin = path.resolve(process.cwd(), 'bin/playwright-lean-mcp.mjs');
@@ -41,7 +50,7 @@ test('MCP Server: handles JSON-RPC initialize, tools/list, and dynamic tool grou
   const listRes1 = await waitForResponse(2);
   const toolNames1 = listRes1.result.tools.map((t) => t.name);
   assert.equal(toolNames1.length, 8);
-  assert.ok(toolNames1.includes('playlite_run'));
+  assert.ok(toolNames1.includes('playwright-lean_run'));
   assert.ok(toolNames1.includes('browser_navigate'));
   assert.equal(toolNames1.includes('browser_eval'), false);
 
@@ -50,7 +59,7 @@ test('MCP Server: handles JSON-RPC initialize, tools/list, and dynamic tool grou
     jsonrpc: '2.0',
     id: 3,
     method: 'tools/call',
-    params: { name: 'playlite_enable_group', arguments: { groups: ['browser_advanced'] } },
+    params: { name: 'playwright-lean_enable_group', arguments: { groups: ['browser_advanced'] } },
   });
   const enableRes = await waitForResponse(3);
   assert.ok(enableRes.result.content[0].text.includes('browser_advanced'));
@@ -59,7 +68,7 @@ test('MCP Server: handles JSON-RPC initialize, tools/list, and dynamic tool grou
   send({ jsonrpc: '2.0', id: 4, method: 'tools/list' });
   const listRes2 = await waitForResponse(4);
   const toolNames2 = listRes2.result.tools.map((t) => t.name);
-  assert.equal(toolNames2.length, 19);
+  assert.equal(toolNames2.length, 18);
   assert.ok(toolNames2.includes('browser_eval'));
 
   proc.kill();

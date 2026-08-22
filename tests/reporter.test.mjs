@@ -27,6 +27,7 @@ test('Reporter: PlaywrightLeanReporter initializes and handles onBegin/onTestEnd
   assert.equal(reporter.skipped, 1);
 
   await reporter.onEnd({});
+  assert.ok(fs.existsSync(path.join(tmpDir, 'results.json')));
 
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });

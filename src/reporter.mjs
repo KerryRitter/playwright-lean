@@ -3,26 +3,46 @@ import path from 'path';
 import { clusterResults } from './core/cluster.mjs';
 import { generateDossiers } from './core/dossier.mjs';
 
+function getTestFile(test) {
+  return test.location?.file || test.parent?.location?.file || 'unknown';
+}
+
+function getTestTitle(test) {
+  return test.title || test.titlePath?.().at(-1) || 'unknown test';
+}
+
+function getAssertionResult(test, result) {
+  const outcome = typeof test.outcome === 'function' ? test.outcome() : null;
+  const unexpected = outcome === 'unexpected';
+  const pending = result.status === 'skipped' || outcome === 'skipped';
+  const expectedFailure = outcome === 'expected' && (result.status === 'failed' || result.status === 'timedOut');
+  const status = unexpected ? 'failed' : pending ? 'pending' : expectedFailure ? 'passed' : result.status === 'passed' ? 'passed' : 'failed';
+  const error = result.error || result.errors?.[0];
+
+  return {
+    title: getTestTitle(test),
+    fullName: getTestTitle(test),
+    status,
+    failureMessages: status === 'failed'
+      ? [error?.stack || error?.message || (result.status === 'passed' ? 'Test was expected to fail, but passed' : 'Test failed')]
+      : [],
+  };
+}
+
 /**
- * PlaywrightLeanReporter
- * 
- * Native Playwright reporter that:
- * 1. Suppresses massive per-test stdout spam
- * 2. Writes deterministic results.json
- * 3. Automatically clusters errors into 0-token root cause signatures
- * 4. Generates on-demand markdown dossiers in .playwright-lean/errors/
- * 5. Emits an ultra-lean (<150 token) markdown summary index table
+ * Native Playwright reporter that writes a structured, Jest-compatible report,
+ * then creates compact on-demand failure dossiers.
  */
 export default class PlaywrightLeanReporter {
   constructor(options = {}) {
-    this.outputFile = options.outputFile || '.playwright-lean/results.json';
-    this.outputDir = options.outputDir || (this.outputFile.includes('/') ? path.dirname(this.outputFile) : '.playwright-lean');
+    this.outputDir = options.outputDir || '.playwright-lean';
+    this.outputFile = options.outputFile || path.join(this.outputDir, 'results.json');
     this.quiet = options.quiet ?? false;
     this.total = 0;
     this.passed = 0;
     this.failed = 0;
     this.skipped = 0;
-    this.suiteTree = { suites: [] };
+    this.resultsByTest = new Map();
   }
 
   onBegin(config, suite) {
@@ -33,42 +53,35 @@ export default class PlaywrightLeanReporter {
   }
 
   onTestEnd(test, result) {
-    if (result.status === 'passed') {
-      this.passed++;
-    } else if (result.status === 'skipped') {
-      this.skipped++;
-    } else {
-      this.failed++;
-    }
+    if (result.status === 'passed') this.passed++;
+    else if (result.status === 'skipped') this.skipped++;
+    else this.failed++;
+
+    this.resultsByTest.set(test, { file: getTestFile(test), assertion: getAssertionResult(test, result) });
   }
 
-  async onEnd(result) {
+  async onEnd() {
     const outDir = path.resolve(process.cwd(), this.outputDir);
-    if (!fs.existsSync(outDir)) {
-      fs.mkdirSync(outDir, { recursive: true });
-    }
+    fs.mkdirSync(outDir, { recursive: true });
 
+    const grouped = new Map();
+    for (const { file, assertion } of this.resultsByTest.values()) {
+      if (!grouped.has(file)) grouped.set(file, []);
+      grouped.get(file).push(assertion);
+    }
+    const report = {
+      testResults: Array.from(grouped, ([name, assertionResults]) => ({ name, assertionResults })),
+    };
     const resolvedOutput = path.resolve(process.cwd(), this.outputFile);
+    fs.mkdirSync(path.dirname(resolvedOutput), { recursive: true });
+    fs.writeFileSync(resolvedOutput, JSON.stringify(report, null, 2), 'utf8');
 
-    // If an external or built-in json reporter already wrote the file, or if we need to cluster
-    if (fs.existsSync(resolvedOutput)) {
-      try {
-        const clusterSummary = clusterResults(resolvedOutput, outDir);
-        const dossierSummary = generateDossiers(clusterSummary, outDir);
-
-        if (!this.quiet) {
-          process.stdout.write('\n' + dossierSummary.compactIndex + '\n');
-        }
-        return;
-      } catch (e) {
-        process.stderr.write(`[pw-lean] Clustering error: ${e.message}\n`);
-      }
-    }
-
-    if (!this.quiet) {
-      process.stdout.write(
-        `\n[pw-lean] Suite finished: ${this.total} tests | ${this.passed} passed | ${this.failed} failed | ${this.skipped} skipped\n`
-      );
+    try {
+      const clusterSummary = clusterResults(resolvedOutput, outDir);
+      const dossierSummary = generateDossiers(clusterSummary, outDir);
+      if (!this.quiet) process.stdout.write(`\n${dossierSummary.compactIndex}\n`);
+    } catch (err) {
+      process.stderr.write(`[pw-lean] Clustering error: ${err.message}\n`);
     }
   }
 }

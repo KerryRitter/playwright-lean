@@ -1,24 +1,40 @@
 import fs from 'fs';
 import path from 'path';
+import { isTestFile, shouldSkipDirectory } from './test-files.mjs';
 
-function scanFiles(dir, globPattern, fileList = []) {
+function matchesFilter(filePath, filter) {
+  if (!filter) return true;
+  const normalizedPath = filePath.split(path.sep).join('/');
+  const normalizedFilter = filter.split(path.sep).join('/');
+
+  if (!/[?*]/.test(normalizedFilter)) {
+    return normalizedPath.includes(normalizedFilter);
+  }
+
+  const pattern = normalizedFilter
+    .replace(/[.+^${}()|[\]\\]/g, '\\$&')
+    .replace(/\*\*\//g, '@@GLOBSTAR_SLASH@@')
+    .replace(/\*\*/g, '@@GLOBSTAR@@')
+    .replace(/\*/g, '@@STAR@@')
+    .replace(/\?/g, '@@QUESTION@@')
+    .replace(/@@GLOBSTAR_SLASH@@/g, '(?:.*/)?')
+    .replace(/@@GLOBSTAR@@/g, '.*')
+    .replace(/@@STAR@@/g, '[^/]*')
+    .replace(/@@QUESTION@@/g, '[^/]');
+  return new RegExp(`^${pattern}$`).test(normalizedPath);
+}
+
+function scanFiles(dir, globPattern, fileList = [], rootDir = dir) {
   const entries = fs.readdirSync(dir, { withFileTypes: true });
   for (const entry of entries) {
     const fullPath = path.join(dir, entry.name);
     if (entry.isDirectory()) {
-      if (
-        entry.name !== 'node_modules' &&
-        entry.name !== '.playwright-lean' &&
-        entry.name !== '.playlite' &&
-        entry.name !== 'test-results' &&
-        entry.name !== 'dist' &&
-        entry.name !== '.git'
-      ) {
-        scanFiles(fullPath, globPattern, fileList);
+      if (!shouldSkipDirectory(entry.name)) {
+        scanFiles(fullPath, globPattern, fileList, rootDir);
       }
-    } else if (entry.isFile() && (entry.name.endsWith('.ts') || entry.name.endsWith('.js') || entry.name.endsWith('.mjs'))) {
-      const rel = path.relative(process.cwd(), fullPath);
-      if (!globPattern || rel.includes(globPattern)) {
+    } else if (entry.isFile() && isTestFile(entry.name)) {
+      const rel = path.relative(rootDir, fullPath);
+      if (matchesFilter(rel, globPattern)) {
         fileList.push(fullPath);
       }
     }
@@ -27,7 +43,10 @@ function scanFiles(dir, globPattern, fileList = []) {
 }
 
 export function runCodemod(findPattern, replacePattern, options = {}) {
-  const { dryRun = false, glob = '', cwd = process.cwd(), targetDir = null } = options;
+  const { dryRun = true, apply = false, glob = '', cwd = process.cwd(), targetDir = null } = options;
+  if (!dryRun && !apply) {
+    throw new Error('Refusing to modify files without explicit apply: true');
+  }
   const rootDir = targetDir || cwd;
   const files = scanFiles(rootDir, glob);
 

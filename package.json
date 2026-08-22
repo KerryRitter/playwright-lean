@@ -20,7 +20,8 @@
   },
   "scripts": {
     "test": "node --test tests/*.test.mjs",
-    "audit": "node bin/playwright-lean.mjs audit"
+    "audit": "node bin/playwright-lean.mjs audit",
+    "prepublishOnly": "npm test"
   },
   "keywords": [
     "playwright",
@@ -35,6 +36,26 @@
   ],
   "author": "Kerry",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/KerryRitter/playwright-lean.git"
+  },
+  "bugs": {
+    "url": "https://github.com/KerryRitter/playwright-lean/issues"
+  },
+  "homepage": "https://github.com/KerryRitter/playwright-lean#readme",
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "bin/",
+    "src/",
+    "README.md",
+    "LICENSE"
+  ],
   "dependencies": {
     "playwright": "^1.50.0"
   }

@@ -1,9 +1,9 @@
 export const TOOL_GROUPS = {
   core: [
-    'playlite_enable_group',
-    'playlite_run',
-    'playlite_diagnose',
-    'playlite_verify',
+    'playwright-lean_enable_group',
+    'playwright-lean_run',
+    'playwright-lean_diagnose',
+    'playwright-lean_verify',
     'browser_navigate',
     'browser_snapshot',
     'browser_click',
@@ -19,14 +19,13 @@ export const TOOL_GROUPS = {
     'browser_tabs',
     'browser_select_tab',
     'browser_eval',
-    'browser_run_script',
     'browser_close',
   ],
   suite_advanced: [
-    'playlite_cluster',
-    'playlite_dossier',
-    'playlite_audit',
-    'playlite_codemod',
+    'playwright-lean_cluster',
+    'playwright-lean_dossier',
+    'playwright-lean_audit',
+    'playwright-lean_codemod',
   ],
 };
 

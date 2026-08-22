@@ -11,6 +11,8 @@ test('Codemod Engine: applies regex transformations and dry runs', () => {
 
   const specPath = path.join(tempDir, 'sample.spec.ts');
   fs.writeFileSync(specPath, 'expect(status).toBe(200);', 'utf8');
+  const sourcePath = path.join(tempDir, 'app.ts');
+  fs.writeFileSync(sourcePath, 'expect(status).toBe(200);', 'utf8');
 
   // Dry run
   const dryRes = runCodemod('toBe\\(200\\)', 'toBe(201)', {
@@ -21,13 +23,21 @@ test('Codemod Engine: applies regex transformations and dry runs', () => {
   assert.equal(dryRes.totalReplacements, 1);
   assert.equal(fs.readFileSync(specPath, 'utf8'), 'expect(status).toBe(200);');
 
+  const globRes = runCodemod('toBe\\(200\\)', 'toBe(201)', {
+    glob: '**/sample.spec.ts',
+    targetDir: tempDir,
+  });
+  assert.equal(globRes.matchedFiles, 1);
+
   // Real run
   const realRes = runCodemod('toBe\\(200\\)', 'toBe(201)', {
     dryRun: false,
+    apply: true,
     targetDir: tempDir,
   });
   assert.equal(realRes.totalReplacements, 1);
   assert.equal(fs.readFileSync(specPath, 'utf8'), 'expect(status).toBe(201);');
+  assert.equal(fs.readFileSync(sourcePath, 'utf8'), 'expect(status).toBe(200);');
 
   fs.rmSync(tempDir, { recursive: true, force: true });
 });

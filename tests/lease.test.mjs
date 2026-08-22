@@ -11,26 +11,29 @@ test('Lease Manager: acquires and releases lease cleanly', () => {
   // Acquire lease
   const acquired = acquireLease({ leasePath: tempLeasePath, quiet: true });
   assert.equal(acquired, true);
-  assert.equal(fs.existsSync(tempLeasePath), true);
+  const lockDir = `${tempLeasePath}.lock`;
+  assert.equal(fs.existsSync(lockDir), true);
 
-  const content = JSON.parse(fs.readFileSync(tempLeasePath, 'utf8'));
+  const content = JSON.parse(fs.readFileSync(path.join(lockDir, 'owner.json'), 'utf8'));
   assert.equal(content.pid, process.pid);
 
   // Release lease
   releaseLease({ leasePath: tempLeasePath });
-  assert.equal(fs.existsSync(tempLeasePath), false);
+  assert.equal(fs.existsSync(lockDir), false);
 });
 
 test('Lease Manager: reclaims stale lease from non-existent PID', () => {
   const tempLeasePath = path.join(os.tmpdir(), `pw-lean-stale-lease-${Date.now()}.lease`);
   
   // Write fake lease with dead PID (e.g. 999999)
-  fs.writeFileSync(tempLeasePath, JSON.stringify({ pid: 999999, time: new Date().toISOString() }));
+  const lockDir = `${tempLeasePath}.lock`;
+  fs.mkdirSync(lockDir);
+  fs.writeFileSync(path.join(lockDir, 'owner.json'), JSON.stringify({ pid: 999999, time: new Date().toISOString() }));
 
   const acquired = acquireLease({ leasePath: tempLeasePath, quiet: true, timeoutMs: 2000 });
   assert.equal(acquired, true);
 
-  const content = JSON.parse(fs.readFileSync(tempLeasePath, 'utf8'));
+  const content = JSON.parse(fs.readFileSync(path.join(lockDir, 'owner.json'), 'utf8'));
   assert.equal(content.pid, process.pid);
 
   releaseLease({ leasePath: tempLeasePath });

@@ -24,5 +24,10 @@ test('Browser Session: executes eval expressions and navigates data URLs', async
   const clickRes = await session.click(findRes.matches[0].ref);
   assert.equal(clickRes.success, true);
 
+  await assert.rejects(
+    session.takeScreenshot({ filename: '/tmp/outside-workspace.png' }),
+    /must stay inside .playwright-lean\/screenshots/
+  );
+
   await session.close();
 });

@@ -1,9 +1,19 @@
 import fs from 'fs';
 import path from 'path';
+import { pathToFileURL } from 'url';
 import { clusterResults } from './cluster.mjs';
 
-const DOSSIER_DIR = path.resolve(process.cwd(), '.playwright-lean/errors');
-const STATE_CACHE = path.resolve(process.cwd(), '.playwright-lean/cache/last-run-state.json');
+const MAX_CLUSTERS_IN_INDEX = 10;
+const MAX_AFFECTED_SPECS = 50;
+const MAX_SIGNATURE_CHARS = 2_000;
+
+function truncate(text, maxLength) {
+  return text.length > maxLength ? `${text.slice(0, maxLength)}\n… [truncated]` : text;
+}
+
+function escapeTableCell(text) {
+  return text.replace(/[|\r\n]/g, (character) => (character === '|' ? '\\|' : ' '));
+}
 
 export function generateDossiers(input = '.playwright-lean/results.json', customOutputDir) {
   const dossierDir = customOutputDir
@@ -33,7 +43,12 @@ export function generateDossiers(input = '.playwright-lean/results.json', custom
     activeClusterIds.add(c.id);
     const clusterFilePath = path.join(dossierDir, `${c.id}.md`);
 
-    const affectedList = c.affectedSpecs.map((s) => `- \`${s.file}\` (${s.title})`).join('\n');
+    const visibleSpecs = c.affectedSpecs.slice(0, MAX_AFFECTED_SPECS);
+    let affectedList = visibleSpecs.map((s) => `- \`${s.file}\` (${s.title})`).join('\n');
+    if (c.affectedSpecs.length > visibleSpecs.length) {
+      affectedList += `\n- … ${c.affectedSpecs.length - visibleSpecs.length} additional affected tests omitted`;
+    }
+    const signature = truncate(c.signature.replace(/```/g, '``\\`'), MAX_SIGNATURE_CHARS);
     const codeSnippet = c.snippet
       ? `\`\`\`typescript\n// ${c.snippet.file}:${c.snippet.line}\n${c.snippet.code}\n\`\`\``
       : '*(No source snippet available)*';
@@ -48,7 +63,7 @@ export function generateDossiers(input = '.playwright-lean/results.json', custom
 
 ## 💥 Normalized Error Signature
 \`\`\`text
-${c.signature}
+${signature}
 \`\`\`
 
 ---
@@ -71,15 +86,15 @@ playwright-lean verify ${c.id}
 
     fs.writeFileSync(clusterFilePath, dossierContent, 'utf8');
 
-    const fileLink = `[${c.id}](file://${clusterFilePath}#L1)`;
+    const fileLink = `[${c.id}](${pathToFileURL(clusterFilePath).href}#L1)`;
     const shortSig = (c.signature.split('\n')[0] || '').substring(0, 48);
     const shortFrame = (c.primaryFrame.split('/').slice(-2).join('/') || c.primaryFrame).substring(0, 36);
 
-    indexRows.push({
+    if (indexRows.length < MAX_CLUSTERS_IN_INDEX) indexRows.push({
       Cluster: fileLink,
       Failed: c.count,
-      Frame: shortFrame,
-      Error: shortSig,
+      Frame: escapeTableCell(shortFrame),
+      Error: escapeTableCell(shortSig),
     });
   }
 
@@ -132,7 +147,7 @@ playwright-lean verify ${c.id}
   };
   fs.writeFileSync(stateCache, JSON.stringify(currentState, null, 2), 'utf8');
 
-  // Build compact index markdown (< 150 tokens)
+  // Build a bounded summary index; full dossiers remain on disk.
   let deltaStr = '';
   if (deltas.fixed > 0 || deltas.regressed > 0) {
     deltaStr = ` | **Δ vs last**: +${deltas.fixed} fixed / -${deltas.regressed} regressed`;
@@ -149,6 +164,9 @@ playwright-lean verify ${c.id}
     indexMarkdown += '| Cluster | Count | Root Frame | Error Signature |\n| :--- | :--- | :--- | :--- |\n';
     for (const r of indexRows) {
       indexMarkdown += `| ${r.Cluster} | ${r.Failed} | \`${r.Frame}\` | ${r.Error} |\n`;
+    }
+    if (summary.clusterCount > indexRows.length) {
+      indexMarkdown += `\n> *${summary.clusterCount - indexRows.length} additional clusters were written to disk but omitted from this summary.*\n`;
     }
     indexMarkdown += `\n> *Click any cluster link above to inspect the minimal failure dossier, or run \`playwright-lean diagnose <CLUSTER-ID>\`.*`;
   }

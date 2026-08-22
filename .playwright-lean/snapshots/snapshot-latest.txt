@@ -1,3 +1,0 @@
-- [ref=e1] document:
-  - [ref=e2] heading "Playwright Lean" [level=1]
-  - [ref=e3] button "Click Me"

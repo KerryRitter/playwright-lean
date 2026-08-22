@@ -5,14 +5,13 @@ import { getDiagnostic } from '../core/diagnose.mjs';
 import { verifyTarget } from '../core/verify.mjs';
 import { auditCodebase } from '../core/audit.mjs';
 import { runCodemod } from '../core/codemod.mjs';
-import { runScript } from '../core/script.mjs';
 import { session } from '../browser/session.mjs';
 import { groupManager, TOOL_GROUPS } from './groups.mjs';
 
 export const ALL_MCP_TOOLS = [
   // --- DYNAMIC GROUP CONTROLLER ---
   {
-    name: 'playlite_enable_group',
+    name: 'playwright-lean_enable_group',
     description: 'Dynamically enable deferred tool groups (e.g. "browser_advanced", "suite_advanced", or "all") on-demand to save ~70% token overhead on routine turns.',
     inputSchema: {
       type: 'object',
@@ -32,8 +31,8 @@ export const ALL_MCP_TOOLS = [
 
   // --- CORE SUITE TOOLS ---
   {
-    name: 'playlite_run',
-    description: 'Execute Playwright tests quietly with machine lease, outputting a lean run summary index (< 150 tokens) and generating on-demand error dossiers in .playwright-lean/errors/.',
+    name: 'playwright-lean_run',
+    description: 'Execute Playwright tests with a bounded summary index and on-demand error dossiers in .playwright-lean/errors/.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -49,8 +48,8 @@ export const ALL_MCP_TOOLS = [
     },
   },
   {
-    name: 'playlite_diagnose',
-    description: 'Get the exact minimal repair dossier for a specific failure cluster on demand (< 2.5k tokens).',
+    name: 'playwright-lean_diagnose',
+    description: 'Get the repair dossier for a specific failure cluster on demand.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -60,7 +59,7 @@ export const ALL_MCP_TOOLS = [
     },
   },
   {
-    name: 'playlite_verify',
+    name: 'playwright-lean_verify',
     description: 'Re-run only the specs affected by a specific cluster or file to verify a fix immediately.',
     inputSchema: {
       type: 'object',
@@ -211,25 +210,13 @@ export const ALL_MCP_TOOLS = [
   },
   {
     name: 'browser_eval',
-    description: 'Evaluate JavaScript in the page DOM context (default) or Node context with --node.',
+    description: 'Evaluate a JavaScript expression in the current page DOM context.',
     inputSchema: {
       type: 'object',
       properties: {
-        code: { type: 'string', description: 'JavaScript code expression to evaluate.' },
-        nodeContext: { type: 'boolean', description: 'If true, evaluates in Node.js context with `page`, `context`, `browser` in scope.' },
+        code: { type: 'string', description: 'JavaScript code expression to evaluate in the page.' },
       },
       required: ['code'],
-    },
-  },
-  {
-    name: 'browser_run_script',
-    description: 'Run an ad-hoc debug/test script against the live browser with `page` and helpers in scope.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        scriptPathOrCode: { type: 'string', description: 'Script file path or code string to execute.' },
-      },
-      required: ['scriptPathOrCode'],
     },
   },
   {
@@ -243,7 +230,7 @@ export const ALL_MCP_TOOLS = [
 
   // --- ADVANCED SUITE TOOLS ---
   {
-    name: 'playlite_cluster',
+    name: 'playwright-lean_cluster',
     description: 'Parse Playwright results.json and group test failures into root cause clusters by failure signature.',
     inputSchema: {
       type: 'object',
@@ -253,7 +240,7 @@ export const ALL_MCP_TOOLS = [
     },
   },
   {
-    name: 'playlite_dossier',
+    name: 'playwright-lean_dossier',
     description: 'Generate on-demand markdown error dossiers (.playwright-lean/errors/CLUSTER-XX.md) and compute run-to-run deltas (+fixed / -regressed).',
     inputSchema: {
       type: 'object',
@@ -263,7 +250,7 @@ export const ALL_MCP_TOOLS = [
     },
   },
   {
-    name: 'playlite_audit',
+    name: 'playwright-lean_audit',
     description: 'Run static AST/regex audit across test files for anti-patterns (test.skip, fixed sleeps, weakened assertions).',
     inputSchema: {
       type: 'object',
@@ -273,7 +260,7 @@ export const ALL_MCP_TOOLS = [
     },
   },
   {
-    name: 'playlite_codemod',
+    name: 'playwright-lean_codemod',
     description: 'Apply batch regex/AST pattern transformations across test specs.',
     inputSchema: {
       type: 'object',
@@ -281,7 +268,8 @@ export const ALL_MCP_TOOLS = [
         find: { type: 'string', description: 'Regular expression pattern to find.' },
         replace: { type: 'string', description: 'Replacement string.' },
         glob: { type: 'string', description: 'Optional file filter (e.g. "billing").' },
-        dryRun: { type: 'boolean', description: 'If true, simulates changes without modifying files on disk.' },
+        dryRun: { type: 'boolean', description: 'Deprecated: mutations require apply: true.' },
+        apply: { type: 'boolean', description: 'Explicitly allow this tool call to modify matching test files.' },
       },
       required: ['find', 'replace'],
     },
@@ -291,7 +279,7 @@ export const ALL_MCP_TOOLS = [
 export function getVisibleTools() {
   const hidden = groupManager.getHiddenGroupsInfo();
   return ALL_MCP_TOOLS.filter((t) => groupManager.isToolEnabled(t.name)).map((t) => {
-    if (t.name === 'playlite_enable_group') {
+    if (t.name === 'playwright-lean_enable_group') {
       const summary = hidden.length > 0
         ? ` Currently deferred: ${hidden.map((h) => `${h.group} (${h.count} tools)`).join(', ')}.`
         : ' All tool groups currently enabled.';
@@ -305,9 +293,29 @@ export function getVisibleTools() {
 }
 
 export async function handleToolCall(name, args = {}) {
+  if (name !== 'playwright-lean_enable_group' && !groupManager.isToolEnabled(name)) {
+    return {
+      content: [{ type: 'text', text: `Tool is not enabled: ${name}` }],
+      isError: true,
+    };
+  }
+
   switch (name) {
-    case 'playlite_enable_group': {
+    case 'playwright-lean_enable_group': {
       const { groups = [] } = args;
+      if (!Array.isArray(groups)) {
+        return {
+          content: [{ type: 'text', text: 'groups must be an array.' }],
+          isError: true,
+        };
+      }
+      const invalidGroups = groups.filter((group) => !['browser_advanced', 'suite_advanced', 'all'].includes(group));
+      if (invalidGroups.length > 0) {
+        return {
+          content: [{ type: 'text', text: `Unknown tool groups: ${invalidGroups.join(', ')}` }],
+          isError: true,
+        };
+      }
       const newlyEnabled = groupManager.enable(groups);
       const active = Array.from(groupManager.enabledGroups);
       return {
@@ -423,17 +431,6 @@ export async function handleToolCall(name, args = {}) {
       };
     }
 
-    case 'browser_run_script': {
-      const res = await runScript(args.scriptPathOrCode, args);
-      const text = res.success
-        ? `✅ Script executed successfully in ${res.durationMs}ms.\nResult: ${JSON.stringify(res.result, null, 2)}`
-        : `❌ Script execution failed: ${res.error}\nStack: ${res.stack}`;
-      return {
-        content: [{ type: 'text', text }],
-        isError: !res.success,
-      };
-    }
-
     case 'browser_close': {
       await session.close();
       return {
@@ -442,8 +439,8 @@ export async function handleToolCall(name, args = {}) {
     }
 
     // Suite tools
-    case 'playlite_run': {
-      const { patterns = [], project, workers = 1, config = 'playwright.config.ts' } = args;
+    case 'playwright-lean_run': {
+      const { patterns = [], project, workers = 1, config = null } = args;
       const result = await runPlaywright({
         patterns,
         project,
@@ -458,11 +455,11 @@ export async function handleToolCall(name, args = {}) {
 
       return {
         content: [{ type: 'text', text }],
-        isError: result.exitCode !== 0 && (!result.dossier || result.dossier.failed > 0),
+        isError: result.exitCode !== 0,
       };
     }
 
-    case 'playlite_cluster': {
+    case 'playwright-lean_cluster': {
       const { jsonPath = '.playwright-lean/results.json' } = args;
       try {
         const summary = clusterResults(jsonPath);
@@ -477,7 +474,7 @@ export async function handleToolCall(name, args = {}) {
       }
     }
 
-    case 'playlite_dossier': {
+    case 'playwright-lean_dossier': {
       const { jsonPath = '.playwright-lean/results.json' } = args;
       const res = generateDossiers(jsonPath);
       return {
@@ -485,7 +482,7 @@ export async function handleToolCall(name, args = {}) {
       };
     }
 
-    case 'playlite_diagnose': {
+    case 'playwright-lean_diagnose': {
       const { clusterId } = args;
       try {
         const diag = getDiagnostic(clusterId);
@@ -500,7 +497,7 @@ export async function handleToolCall(name, args = {}) {
       }
     }
 
-    case 'playlite_verify': {
+    case 'playwright-lean_verify': {
       const { target } = args;
       try {
         const res = await verifyTarget(target, { quiet: true });
@@ -519,7 +516,7 @@ export async function handleToolCall(name, args = {}) {
       }
     }
 
-    case 'playlite_audit': {
+    case 'playwright-lean_audit': {
       const { path: targetDir = process.cwd() } = args;
       const result = auditCodebase(targetDir);
       return {
@@ -527,9 +524,15 @@ export async function handleToolCall(name, args = {}) {
       };
     }
 
-    case 'playlite_codemod': {
-      const { find, replace, glob = '', dryRun = false } = args;
-      const res = runCodemod(find, replace, { dryRun, glob });
+    case 'playwright-lean_codemod': {
+      const { find, replace, glob = '', apply = false } = args;
+      if (apply && process.env.PW_LEAN_ALLOW_MCP_MUTATIONS !== '1') {
+        return {
+          content: [{ type: 'text', text: 'MCP mutations are disabled. Set PW_LEAN_ALLOW_MCP_MUTATIONS=1 when starting the server, then retry with apply: true.' }],
+          isError: true,
+        };
+      }
+      const res = runCodemod(find, replace, { dryRun: !apply, apply, glob });
       return {
         content: [{ type: 'text', text: JSON.stringify(res, null, 2) }],
       };

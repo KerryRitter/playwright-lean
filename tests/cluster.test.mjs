@@ -119,3 +119,30 @@ test('Cluster Engine: groups Jest/Vitest testResults format into root cause clus
 
   fs.unlinkSync(tempJsonPath);
 });
+
+test('Cluster Engine: treats expected Playwright failures as passing outcomes', () => {
+  const fakeResults = {
+    suites: [{
+      specs: [{
+        title: 'expected failure',
+        file: 'expected.spec.ts',
+        tests: [{
+          status: 'expected',
+          results: [{
+            status: 'failed',
+            error: { message: 'Error: intentional failure', stack: 'Error: intentional failure' },
+          }],
+        }],
+      }],
+    }],
+  };
+  const tempJsonPath = path.join(os.tmpdir(), `pw-lean-expected-${Date.now()}.json`);
+  fs.writeFileSync(tempJsonPath, JSON.stringify(fakeResults));
+
+  const summary = clusterResults(tempJsonPath);
+  assert.equal(summary.passed, 1);
+  assert.equal(summary.failed, 0);
+  assert.equal(summary.clusterCount, 0);
+
+  fs.unlinkSync(tempJsonPath);
+});
