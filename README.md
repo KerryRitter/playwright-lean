@@ -285,7 +285,7 @@ The test count is intentionally not documented here; use the command output as t
 
 This repository publishes from GitHub Actions only after a GitHub release is marked **published**. The workflow checks out the release tag, installs dependencies and Chromium, runs the full test suite, and publishes the public package with provenance. It uses npm trusted publishing (OIDC), so it does not require an npm token in GitHub secrets.
 
-Run the reproducible bootstrap script before the first release. It checks the Node/npm versions, npm authentication, the GitHub origin, and the publish tarball; it then makes the one-time public publish and configures the trusted publisher. It intentionally refuses to publish a package that already exists.
+Run the reproducible bootstrap script before the first release. It checks the Node/npm versions, npm authentication, the GitHub origin, and the publish tarball; it then makes the one-time public publish and configures the trusted publisher. The first local publish establishes package ownership; later GitHub Actions releases receive provenance automatically. It intentionally refuses to publish a package that already exists.
 
 ```bash
 chmod +x scripts/bootstrap-npm-publishing.sh

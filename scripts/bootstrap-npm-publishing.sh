@@ -101,7 +101,10 @@ if [[ "$COMMAND" == '--publish-initial' ]]; then
   printf 'Publishing %s@%s as the one-time initial public release...\n' "$PACKAGE_NAME" "$PACKAGE_VERSION"
   npm pack --dry-run
   npx playwright install chromium
-  npm publish --provenance --access public
+  # npm provenance can only be minted by a supported CI provider. The initial
+  # local publish establishes package ownership; trusted GitHub Actions releases
+  # automatically receive provenance afterwards.
+  npm publish --access public
 else
   package_exists || fail "$PACKAGE_NAME is not yet registered on npm. Run with --publish-initial first."
 fi

@@ -30,4 +30,6 @@ jobs:
         run: |
           VERSION="$(node -p "require('./package.json').version")"
           test "v${VERSION}" = "$RELEASE_TAG"
-      - run: npm publish --provenance --access public
+      # npm trusted publishing detects the GitHub OIDC token and generates
+      # provenance automatically; no long-lived npm token is needed.
+      - run: npm publish --access public
