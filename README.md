@@ -285,25 +285,20 @@ The test count is intentionally not documented here; use the command output as t
 
 This repository publishes from GitHub Actions only after a GitHub release is marked **published**. The workflow checks out the release tag, installs dependencies and Chromium, runs the full test suite, and publishes the public package with provenance. It uses npm trusted publishing (OIDC), so it does not require an npm token in GitHub secrets.
 
-Before the first release, authenticate to npm with the account that should own `playwright-lean`, then create the trust relationship:
+Run the reproducible bootstrap script before the first release. It checks the Node/npm versions, npm authentication, the GitHub origin, and the publish tarball; it then makes the one-time public publish and configures the trusted publisher. It intentionally refuses to publish a package that already exists.
 
 ```bash
-npm login
-npm install --global npm@^11.5.1
-npm trust github playwright-lean \
-  --repo KerryRitter/playwright-lean \
-  --file publish.yml \
-  --allow-publish
+chmod +x scripts/bootstrap-npm-publishing.sh
+./scripts/bootstrap-npm-publishing.sh --publish-initial
 ```
 
-Trusted publishing requires npm 11.5.1+ and Node 22.14+ for this setup. If npm requires the package to exist before it can create the trust relationship, perform the one-time initial publish from this checked-out, verified release instead:
+The script requires npm 11.5.1+, Node 22.14+, an authenticated npm account, and interactive 2FA approval. If the initial package publish succeeded but the trust command did not, finish only that step with:
 
 ```bash
-npx playwright install chromium
-npm publish --provenance --access public
+./scripts/bootstrap-npm-publishing.sh --configure-trust
 ```
 
-Then rerun the `npm trust github` command. For every later version, update `version` in `package.json`, commit and tag it as `v<version>`, push the tag, and create a matching GitHub Release. The release activates `.github/workflows/publish.yml`.
+For every later version, update `version` in `package.json`, commit and tag it as `v<version>`, push the tag, and create a matching GitHub Release. The release activates `.github/workflows/publish.yml`.
 
 Keep `repository.url` pointed at this public repository: npm uses the exact URL when establishing provenance. After the trusted publisher has succeeded once, consider enabling npm's **Require two-factor authentication and disallow tokens** publishing policy for the package.
 
