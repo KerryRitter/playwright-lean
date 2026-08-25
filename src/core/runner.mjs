@@ -4,9 +4,10 @@ import path from 'path';
 import fs from 'fs';
 import { acquireLease, releaseLease } from './lease.mjs';
 import { generateDossiers } from './dossier.mjs';
+import { inspectConfigReporters } from './config-report.mjs';
 
 const require = createRequire(import.meta.url);
-const PLAYWRIGHT_CLI = path.join(path.dirname(require.resolve('playwright')), 'cli.js');
+const BUNDLED_PLAYWRIGHT_CLI = path.join(path.dirname(require.resolve('playwright')), 'cli.js');
 const MAX_CAPTURED_OUTPUT_CHARS = 10_000;
 const DEFAULT_CONFIGS = [
   'playwright.config.ts',
@@ -35,6 +36,18 @@ function resolveConfig(config) {
   return { targetCwd: process.cwd(), configPath: null };
 }
 
+export function resolvePlaywrightCli(targetCwd) {
+  try {
+    const targetRequire = createRequire(path.join(targetCwd, 'package.json'));
+    const packageEntry = targetRequire.resolve('playwright');
+    const cliPath = path.join(path.dirname(packageEntry), 'cli.js');
+    if (fs.existsSync(cliPath)) return cliPath;
+  } catch {
+    // A standalone caller may not have Playwright installed; use our dependency.
+  }
+  return BUNDLED_PLAYWRIGHT_CLI;
+}
+
 function removePreviousReport(reportPath) {
   if (!fs.existsSync(reportPath)) return;
   const stat = fs.lstatSync(reportPath);
@@ -42,6 +55,15 @@ function removePreviousReport(reportPath) {
     throw new Error(`Results path exists but is not a file: ${reportPath}`);
   }
   fs.unlinkSync(reportPath);
+}
+
+function configuredReportPath(configReport, targetCwd, resultsAbsPath) {
+  if (!configReport.hasMachineReadable) return null;
+  if (configReport.outputFile) return path.resolve(targetCwd, configReport.outputFile);
+  if (configReport.reporter === 'playwright-lean/reporter') {
+    return path.resolve(targetCwd, configReport.outputDir || '.playwright-lean', 'results.json');
+  }
+  return resultsAbsPath;
 }
 
 export async function runPlaywright(options = {}) {
@@ -68,16 +90,26 @@ export async function runPlaywright(options = {}) {
   acquireLease({ quiet, info: `playwright run ${patterns.join(' ')}` });
 
   try {
-    removePreviousReport(resultsAbsPath);
-
     const { targetCwd, configPath } = resolveConfig(config);
+    const playwrightCli = resolvePlaywrightCli(targetCwd);
+    const configReport = inspectConfigReporters(configPath);
+    const configuredResultsPath = configuredReportPath(configReport, targetCwd, resultsAbsPath);
+
+    removePreviousReport(resultsAbsPath);
+    if (configuredResultsPath && configuredResultsPath !== resultsAbsPath) {
+      removePreviousReport(configuredResultsPath);
+    }
+
     const args = [
-      PLAYWRIGHT_CLI,
+      playwrightCli,
       'test',
       ...patterns,
       `--workers=${workers}`,
-      '--reporter=json,line',
     ];
+
+    if (!configReport.hasMachineReadable) {
+      args.push('--reporter=json,line');
+    }
 
     if (configPath) {
       args.push(`--config=${configPath}`);
@@ -104,12 +136,16 @@ export async function runPlaywright(options = {}) {
     };
 
     const exitCode = await new Promise((resolve, reject) => {
+      const childEnv = { ...process.env };
+      if (!configReport.hasMachineReadable || (configReport.reporter === 'json' && !configReport.outputFile)) {
+        childEnv.PLAYWRIGHT_JSON_OUTPUT_FILE = resultsAbsPath;
+      } else {
+        delete childEnv.PLAYWRIGHT_JSON_OUTPUT_FILE;
+      }
+
       const proc = spawn(process.execPath, args, {
         cwd: targetCwd,
-        env: {
-          ...process.env,
-          PLAYWRIGHT_JSON_OUTPUT_FILE: resultsAbsPath,
-        },
+        env: childEnv,
         stdio: ['inherit', 'pipe', 'pipe'],
       });
 
@@ -130,8 +166,17 @@ export async function runPlaywright(options = {}) {
     const durationMs = Date.now() - startTime;
     let dossierResult = null;
 
-    if (fs.existsSync(resultsAbsPath)) {
-      dossierResult = generateDossiers(resultsAbsPath);
+    const producedReportPath = configuredResultsPath && fs.existsSync(configuredResultsPath)
+      ? configuredResultsPath
+      : fs.existsSync(resultsAbsPath)
+        ? resultsAbsPath
+        : null;
+
+    if (producedReportPath) {
+      if (producedReportPath !== resultsAbsPath) {
+        fs.copyFileSync(producedReportPath, resultsAbsPath);
+      }
+      dossierResult = generateDossiers(resultsAbsPath, undefined, { exitCode });
     } else {
       process.stderr.write(`[playwright-lean] No JSON report was produced at ${resultsAbsPath}.\n`);
     }
@@ -143,6 +188,8 @@ export async function runPlaywright(options = {}) {
       dossier: dossierResult,
       fullOutput,
       outputTruncated,
+      usedConfiguredReporter: configReport.hasMachineReadable,
+      playwrightCliPath: playwrightCli,
     };
   } finally {
     releaseLease();

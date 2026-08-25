@@ -43,6 +43,7 @@ export default class PlaywrightLeanReporter {
     this.failed = 0;
     this.skipped = 0;
     this.resultsByTest = new Map();
+    this.errors = [];
   }
 
   onBegin(config, suite) {
@@ -60,7 +61,15 @@ export default class PlaywrightLeanReporter {
     this.resultsByTest.set(test, { file: getTestFile(test), assertion: getAssertionResult(test, result) });
   }
 
-  async onEnd() {
+  onError(error) {
+    this.errors.push({
+      message: error?.message || String(error),
+      stack: error?.stack || '',
+      location: error?.location || null,
+    });
+  }
+
+  async onEnd(result) {
     const outDir = path.resolve(process.cwd(), this.outputDir);
     fs.mkdirSync(outDir, { recursive: true });
 
@@ -71,6 +80,8 @@ export default class PlaywrightLeanReporter {
     }
     const report = {
       testResults: Array.from(grouped, ([name, assertionResults]) => ({ name, assertionResults })),
+      errors: this.errors,
+      status: result?.status || null,
     };
     const resolvedOutput = path.resolve(process.cwd(), this.outputFile);
     fs.mkdirSync(path.dirname(resolvedOutput), { recursive: true });
@@ -78,8 +89,10 @@ export default class PlaywrightLeanReporter {
 
     try {
       const clusterSummary = clusterResults(resolvedOutput, outDir);
-      const dossierSummary = generateDossiers(clusterSummary, outDir);
+      const exitCode = result?.status && result.status !== 'passed' ? 1 : undefined;
+      const dossierSummary = generateDossiers(clusterSummary, outDir, { exitCode });
       if (!this.quiet) process.stdout.write(`\n${dossierSummary.compactIndex}\n`);
+      return dossierSummary;
     } catch (err) {
       process.stderr.write(`[pw-lean] Clustering error: ${err.message}\n`);
     }

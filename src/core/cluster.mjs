@@ -113,6 +113,36 @@ export function clusterResults(jsonPath = '.playwright-lean/results.json', outpu
   let skippedTests = 0;
   const failedSpecs = [];
 
+  function recordFailure(file, title, rawError, stack) {
+    failedTests++;
+    failedSpecs.push({ file, title });
+
+    const normalized = normalizeError(rawError);
+    const category = categorizeError(rawError, stack);
+    const frame = extractPrimaryFrame(stack, file);
+    const clusterKey = `${category}::${frame.relativeLocation}::${normalized}`;
+
+    if (!clustersMap.has(clusterKey)) {
+      clustersMap.set(clusterKey, {
+        category,
+        primaryLocation: frame.relativeLocation,
+        primaryFrame: frame.relativeLocation,
+        file: frame.file,
+        line: frame.line,
+        normalizedError: normalized,
+        signature: normalized,
+        rawErrorSample: redactSensitive(stripAnsi(rawError)).substring(0, 300),
+        stackSample: redactSensitive(stripAnsi(stack)).split('\n').slice(0, 8).join('\n'),
+        count: 0,
+        affectedSpecs: new Map(),
+      });
+    }
+
+    const cluster = clustersMap.get(clusterKey);
+    cluster.count++;
+    cluster.affectedSpecs.set(file, { file, title });
+  }
+
   function traverseSuite(suite) {
     for (const spec of suite.specs || []) {
       for (const test of spec.tests || []) {
@@ -130,38 +160,11 @@ export function clusterResults(jsonPath = '.playwright-lean/results.json', outpu
         } else if (lastResult.status === 'skipped') {
           skippedTests++;
         } else if (isUnexpected || (!test.status && isFailedResult)) {
-          failedTests++;
-          failedSpecs.push({ file: spec.file, title: spec.title });
-
           const rawError = lastResult.error?.message || (lastResult.status === 'passed'
             ? 'Test was expected to fail, but passed'
             : 'Unknown error');
           const stack = lastResult.error?.stack || '';
-          const normalized = normalizeError(rawError);
-          const category = categorizeError(rawError, stack);
-          const frame = extractPrimaryFrame(stack, spec.file);
-
-          const clusterKey = `${category}::${frame.relativeLocation}::${normalized}`;
-
-          if (!clustersMap.has(clusterKey)) {
-            clustersMap.set(clusterKey, {
-              category,
-              primaryLocation: frame.relativeLocation,
-              primaryFrame: frame.relativeLocation,
-              file: frame.file,
-              line: frame.line,
-              normalizedError: normalized,
-              signature: normalized,
-              rawErrorSample: redactSensitive(stripAnsi(rawError)).substring(0, 300),
-              stackSample: redactSensitive(stripAnsi(stack)).split('\n').slice(0, 8).join('\n'),
-              count: 0,
-              affectedSpecs: new Map(),
-            });
-          }
-
-          const cluster = clustersMap.get(clusterKey);
-          cluster.count++;
-          cluster.affectedSpecs.set(spec.file, { file: spec.file, title: spec.title });
+          recordFailure(spec.file, spec.title, rawError, stack);
         }
       }
     }
@@ -185,40 +188,24 @@ export function clusterResults(jsonPath = '.playwright-lean/results.json', outpu
         } else if (assertion.status === 'pending' || assertion.status === 'skipped' || assertion.status === 'todo') {
           skippedTests++;
         } else if (assertion.status === 'failed') {
-          failedTests++;
           const title = assertion.title || assertion.fullName || 'unknown test';
-          failedSpecs.push({ file: filePath, title });
-
           const failureMsg = (assertion.failureMessages || []).join('\n') || 'Assertion failed';
           const rawError = failureMsg.split('\n')[0] || failureMsg;
           const stack = failureMsg;
-          const normalized = normalizeError(rawError);
-          const category = categorizeError(rawError, stack);
-          const frame = extractPrimaryFrame(stack, filePath);
-
-          const clusterKey = `${category}::${frame.relativeLocation}::${normalized}`;
-
-          if (!clustersMap.has(clusterKey)) {
-            clustersMap.set(clusterKey, {
-              category,
-              primaryLocation: frame.relativeLocation,
-              primaryFrame: frame.relativeLocation,
-              file: frame.file,
-              line: frame.line,
-              normalizedError: normalized,
-              signature: normalized,
-              rawErrorSample: redactSensitive(stripAnsi(rawError)).substring(0, 300),
-              stackSample: redactSensitive(stripAnsi(stack)).split('\n').slice(0, 8).join('\n'),
-              count: 0,
-              affectedSpecs: new Map(),
-            });
-          }
-
-          const cluster = clustersMap.get(clusterKey);
-          cluster.count++;
-          cluster.affectedSpecs.set(filePath, { file: filePath, title });
+          recordFailure(filePath, title, rawError, stack);
         }
       }
+    }
+  }
+
+  // Playwright records global setup, teardown, and runner failures here rather
+  // than under a test result. Retain them so a zero-test run is diagnosable.
+  if (Array.isArray(rawData.errors)) {
+    for (const error of rawData.errors) {
+      const file = error.location?.file || '<playwright-runner>';
+      const rawError = error.message || error.value || 'Playwright runner error';
+      const stack = error.stack || rawError;
+      recordFailure(file, 'Playwright runner error', rawError, stack);
     }
   }
 

@@ -53,3 +53,24 @@ test('Dossier Generator: writes markdown dossiers and compact index', () => {
 
   fs.unlinkSync(tempJsonPath);
 });
+
+test('Dossier Generator: a zero-test runner failure is never reported as passing', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pw-lean-zero-test-'));
+  try {
+    const result = generateDossiers({
+      total: 0,
+      passed: 0,
+      failed: 0,
+      skipped: 0,
+      clusterCount: 0,
+      clusters: [],
+      failedSpecs: [],
+    }, tempDir, { exitCode: 1 });
+
+    assert.match(result.indexMarkdown, /Playwright exited with code 1/);
+    assert.match(result.indexMarkdown, /No tests were collected/);
+    assert.doesNotMatch(result.indexMarkdown, /All tests passed/);
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});

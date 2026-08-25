@@ -26,7 +26,7 @@ Running large Playwright test suites alongside AI pair programmers (Claude, Gemi
 | **Failure Diagnosis** | Scrape terminal output file by file | **Signature clustering**: Persists root-cause dossiers (`CLUSTER-01`) for on-demand inspection |
 | **Error Trace Delivery** | Injected directly into chat/turn history | **On-Demand Error Dossiers**: Persisted to `.playwright-lean/errors/CLUSTER-XX.md` and read only when needed |
 | **Run-to-Run Deltas** | None (manual comparison required) | **Automatic Delta Tracking** (`+fixed / -regressed` vs last execution) |
-| **Concurrency & Safety** | Uncoordinated (subagents collide on DB/ports) | **Machine-Wide Run Lease** (`~/.playwright-lean/run.lease`) with automatic stale PID reclamation |
+| **Concurrency & Safety** | Uncoordinated (subagents collide on DB/ports) | **Machine-Wide Run Lease** (`~/.zipper-agent/playwright-run.lease`) with automatic stale PID reclamation |
 | **Interactive Live Browser** | Requires launching a full separate runner or headed mode | **Fast In-Memory Session + CDP Attach** (`pw-lean connect 9222`, `pw-lean eval`, `pw-lean tabs`) |
 | **DOM Tree Compaction** | Full raw accessibility dump | **Noise Stripping & Repeated Sibling Folding** (e.g. 50 table rows folded into 3) |
 | **Static Code Quality** | Requires external ESLint plugins | **Focused regex auditor** (`pw-lean audit`) for banned `test.skip` and fixed sleeps in test files |
@@ -95,7 +95,7 @@ After fixing it, re-run just the affected specs:
 npx pw-lean verify CLUSTER-01
 ```
 
-`pw-lean run` always writes a fresh JSON report, even when the project has its own `playwright.config.*`. It deliberately uses Playwright's JSON and line reporters for that run so report generation is deterministic.
+`pw-lean run` resolves Playwright from the target project first so the CLI and imported test runtime always match, then writes a fresh JSON report. When the project already configures either Playwright's `json` reporter or `playwright-lean/reporter`, the command preserves that reporter list and copies its current report to `.playwright-lean/results.json`. Otherwise it adds Playwright's JSON and line reporters for the run. This keeps integrity reporters intact while preserving deterministic dossier input.
 
 `.playwright-lean/` is generated local state: it contains results, clusters, dossiers, snapshots, and the previous-run cache. It is intentionally ignored by Git.
 

@@ -2,19 +2,15 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 
-const DEFAULT_LEASE_PATH = path.join(os.homedir(), '.playwright-lean', 'run.lease');
+const DEFAULT_LEASE_PATH = path.join(
+  os.homedir(),
+  '.zipper-agent',
+  'playwright-run.lease',
+);
 const POLL_INTERVAL_MS = 500;
 
 export function getLeasePath(customPath) {
   return customPath || process.env.PW_LEAN_LEASE_FILE || DEFAULT_LEASE_PATH;
-}
-
-function getLockDir(leaseFile) {
-  return `${leaseFile}.lock`;
-}
-
-function getOwnerFile(lockDir) {
-  return path.join(lockDir, 'owner.json');
 }
 
 function wait() {
@@ -31,29 +27,66 @@ function isPidAlive(pid) {
   }
 }
 
-function readOwner(lockDir) {
+function readOwner(leaseFile) {
   try {
-    return JSON.parse(fs.readFileSync(getOwnerFile(lockDir), 'utf8'));
+    return JSON.parse(fs.readFileSync(leaseFile, 'utf8'));
   } catch {
     return null;
   }
 }
 
-function reclaimStaleLock(lockDir) {
-  const quarantinedDir = `${lockDir}.stale-${process.pid}-${Date.now()}`;
+function reclaimStaleLease(leaseFile) {
+  const reclaimFile = `${leaseFile}.reclaim`;
+  if (!tryCreateLease(reclaimFile, 'playwright lease reclamation')) return false;
   try {
-    fs.renameSync(lockDir, quarantinedDir);
-  } catch (err) {
-    if (err.code === 'ENOENT') return;
-    throw err;
+    const currentOwner = readOwner(leaseFile);
+    if (currentOwner && isPidAlive(currentOwner.pid)) return false;
+    try {
+      fs.unlinkSync(leaseFile);
+    } catch (err) {
+      if (err.code !== 'ENOENT') throw err;
+    }
+    return true;
+  } finally {
+    releaseOwnedLease(reclaimFile);
   }
-  fs.rmSync(quarantinedDir, { recursive: true, force: true });
+}
+
+function tryCreateLease(leaseFile, info) {
+  const tempFile = `${leaseFile}.${process.pid}-${Date.now()}-${Math.random()
+    .toString(16)
+    .slice(2)}.tmp`;
+  const owner = JSON.stringify(
+    {
+      pid: process.pid,
+      time: new Date().toISOString(),
+      info,
+    },
+    null,
+    2,
+  );
+  fs.writeFileSync(tempFile, owner, { flag: 'wx', mode: 0o600 });
+  try {
+    fs.linkSync(tempFile, leaseFile);
+    return true;
+  } catch (err) {
+    if (err.code === 'EEXIST') return false;
+    throw err;
+  } finally {
+    fs.unlinkSync(tempFile);
+  }
+}
+
+function releaseOwnedLease(leaseFile) {
+  const owner = readOwner(leaseFile);
+  if (owner?.pid === process.pid) {
+    fs.unlinkSync(leaseFile);
+  }
 }
 
 export function acquireLease(options = {}) {
   const leaseFile = getLeasePath(options.leasePath);
   const leaseDir = path.dirname(leaseFile);
-  const lockDir = getLockDir(leaseFile);
   if (!fs.existsSync(leaseDir)) {
     fs.mkdirSync(leaseDir, { recursive: true });
   }
@@ -62,42 +95,35 @@ export function acquireLease(options = {}) {
   const startTime = Date.now();
 
   while (Date.now() - startTime < timeoutMs) {
-    try {
-      fs.mkdirSync(lockDir);
-      fs.writeFileSync(getOwnerFile(lockDir), JSON.stringify({
-        pid: process.pid,
-        time: new Date().toISOString(),
-        info: options.info || 'playwright run',
-      }, null, 2));
-      return true;
-    } catch (err) {
-      if (err.code !== 'EEXIST') throw err;
+    if (tryCreateLease(leaseFile, options.info || 'playwright run')) return true;
 
-      const owner = readOwner(lockDir);
-      if (owner && isPidAlive(owner.pid)) {
-        if (!options.quiet) {
-          process.stderr.write(`[playwright-lean] Runner lease held by PID ${owner.pid} (${owner.info || 'active run'}). Waiting...\n`);
-        }
-        wait();
-        continue;
-      }
-
+    const owner = readOwner(leaseFile);
+    if (owner && isPidAlive(owner.pid)) {
       if (!options.quiet) {
-        const description = owner?.pid ? `dead PID ${owner.pid}` : 'invalid owner metadata';
-        process.stderr.write(`[playwright-lean] Reclaiming stale lease from ${description}\n`);
+        process.stderr.write(
+          `[playwright-lean] Runner lease held by PID ${owner.pid} (${owner.info || 'active run'}). Waiting...\n`,
+        );
       }
-      reclaimStaleLock(lockDir);
+      wait();
+      continue;
     }
+
+    if (!options.quiet) {
+      const description = owner?.pid
+        ? `dead PID ${owner.pid}`
+        : 'invalid owner metadata';
+      process.stderr.write(
+        `[playwright-lean] Reclaiming stale lease from ${description}\n`,
+      );
+    }
+    if (!reclaimStaleLease(leaseFile)) wait();
   }
 
-  throw new Error(`Failed to acquire playwright-lean machine lease within ${timeoutMs / 1000}s (${leaseFile})`);
+  throw new Error(
+    `Failed to acquire playwright-lean machine lease within ${timeoutMs / 1000}s (${leaseFile})`,
+  );
 }
 
 export function releaseLease(options = {}) {
-  const leaseFile = getLeasePath(options.leasePath);
-  const lockDir = getLockDir(leaseFile);
-  const owner = readOwner(lockDir);
-  if (owner?.pid === process.pid) {
-    fs.rmSync(lockDir, { recursive: true, force: true });
-  }
+  releaseOwnedLease(getLeasePath(options.leasePath));
 }

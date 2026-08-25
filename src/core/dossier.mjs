@@ -15,7 +15,7 @@ function escapeTableCell(text) {
   return text.replace(/[|\r\n]/g, (character) => (character === '|' ? '\\|' : ' '));
 }
 
-export function generateDossiers(input = '.playwright-lean/results.json', customOutputDir) {
+export function generateDossiers(input = '.playwright-lean/results.json', customOutputDir, options = {}) {
   const dossierDir = customOutputDir
     ? path.resolve(process.cwd(), customOutputDir, 'errors')
     : path.resolve(process.cwd(), '.playwright-lean/errors');
@@ -158,9 +158,16 @@ playwright-lean verify ${c.id}
 
 `;
 
-  if (indexRows.length === 0) {
+  if (options.exitCode !== undefined && options.exitCode !== 0) {
+    indexMarkdown += `❌ **Playwright exited with code ${options.exitCode}; this run is not passing.**\n`;
+  }
+  if (summary.total === 0) {
+    indexMarkdown += '⚠️ **No tests were collected; this is not proof of a passing suite.**\n';
+  } else if (indexRows.length === 0 && (options.exitCode === undefined || options.exitCode === 0)) {
     indexMarkdown += '🎉 **All tests passed! 0 error clusters.**\n';
-  } else {
+  }
+
+  if (indexRows.length > 0) {
     indexMarkdown += '| Cluster | Count | Root Frame | Error Signature |\n| :--- | :--- | :--- | :--- |\n';
     for (const r of indexRows) {
       indexMarkdown += `| ${r.Cluster} | ${r.Failed} | \`${r.Frame}\` | ${r.Error} |\n`;

@@ -1,6 +1,6 @@
 {
   "name": "playwright-lean",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "Token-optimized CLI & Model Context Protocol (MCP) server for Playwright suite execution, on-demand failure clustering, and live browser automation",
   "main": "src/index.mjs",
   "type": "module",
